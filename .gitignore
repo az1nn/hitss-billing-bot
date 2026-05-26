@@ -1,0 +1,28 @@
+# Pastas com arquivos PDF que não devem ser versionados
+Nova pasta/
+pdfs_old/
+pdfs/
+
+# Arquivos Python compilados
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de ambiente
+.env
+.venv/
+env/
+venv/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Arquivos temporários
+*.tmp
+*.temp
+download
+output

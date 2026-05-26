@@ -1,0 +1,101 @@
+---
+description: Python e RPA — estilo, tipos, I/O, erros e validação para o bot de faturamento
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python e RPA (billing bot)
+
+## Fluxo operacional (diagrama oficial)
+
+O fluxograma de negócio (job diário SharePoint → download condicional → extração PDF/XML → CSV/zip → SQLite → envio Linux) está versionado em:
+
+`docs/fluxo_rpa_sharepoint.png`
+
+Ao implementar ou revisar código, alinhar o comportamento a esse fluxo. Resumo textual para o agente (equivalente ao diagrama):
+
+```mermaid
+flowchart TD
+  A[Job diário] --> B[Auth SharePoint]
+  B -->|erro| N1[Notificar devs]
+  B -->|ok| C[Listar arquivos pasta]
+  C --> D[Loop arquivos]
+  D --> E{Já processado / retry / flag erro no SQLite?}
+  E -->|sim| D
+  E -->|não| F[Download para pasta temporária]
+  F --> G{Tipo arquivo}
+  G -->|PDF| H[Detectar modelo por cidade]
+  H --> I[Extrair dados OCR]
+  G -->|XML| J[Extrair dados ElementTree]
+  I --> K{Sucesso?}
+  J --> K
+  K -->|não| L[Flag erro SQLite + notificar]
+  K -->|sim| M[Append CSV + zip + flag concluído SQLite]
+  M --> O[Enviar para servidor Linux]
+  O --> P[Limpeza + logs / histórico]
+  L --> D
+  P --> Q[Fim]
+```
+
+Campos esperados na extração (schema de saída): paths (`path_xml` / `path_pdf`), `cidade_string`, `cnpj_emitente`, `valor_total_nf`, nome do arquivo recebido, URL do servidor, `data_processamento`, `status_processamento`; config auxiliar em `config_dados.txt` quando aplicável.
+
+## Estilo e arquitetura
+
+- Preferir funções puras e composição; evitar classes salvo quando encapsulam estado de recurso externo (cliente HTTP, DB) de forma clara.
+- Reduzir duplicação com helpers pequenos e iteradores (`for`, comprehensions) em vez de copiar blocos.
+- Nomes de módulos e pacotes em `snake_case` (ex.: `sharepoint_sync.py`, `output_handler.py`).
+- Exportar capacidades como funções nomeadas no nível do módulo; entrypoints (`main`) só orquestram.
+- **RORO (Receive an Object, Return an Object):** para “ferramentas” e APIs internas (parse de args, jobs de sync, handlers), preferir um único argumento tipo `TypedDict`, `dataclass` ou **modelo Pydantic v2** e retornar um objeto estruturado (resultado + metadados + erros parciais), em vez de tuplas longas ou muitos parâmetros posicionais.
+
+## Concorrência e I/O
+
+- `def` para CPU-bound e transformação de dados em memória.
+- `async def` para operações de rede ou I/O de alto volume (ex.: muitas chamadas HTTP em paralelo); manter código síncrono simples quando o ganho não compensa.
+- Isolar side effects (filesystem, SharePoint, DB) em funções finas; facilita testes e retries.
+
+## Tipos e configuração
+
+- Type hints em todas as assinaturas públicas e nas funções compartilhadas entre módulos.
+- Config estruturada ou vinda de ambiente: validar com **Pydantic v2** (`BaseModel`, `Settings` via `pydantic-settings` quando fizer sentido), em vez de espalhar `os.environ.get` sem defaults documentados.
+- Modelos Pydantic para payloads de entrada/saída de integrações (ex.: metadados de arquivo, linhas de CSV) quando o formato for estável.
+
+## Organização de módulos (evolução do repositório)
+
+Manter o raiz enxuto é aceitável hoje; ao crescer, preferir pacotes por responsabilidade, por exemplo:
+
+- `extractors/` — PDF, XML, OCR, regex de CNPJ/valores
+- `sharepoint/` — cliente, sync, estado/persistência
+- `reporting/` — CSV, logs estruturados, zip de saída
+- `validators/` — CNPJ, consistência de NF
+- `types/` ou `schemas/` — modelos Pydantic e `TypedDict` compartilhados
+- `utils/` — helpers pequenos (paths, datas, texto)
+
+Evitar pastas genéricas de “segurança” (scanners, attackers) — não se aplicam a este bot.
+
+## Tratamento de erros e validação
+
+- **Falhas esperadas** (arquivo corrompido, XML inválido, rede intermitente): capturar no limite do job (ex.: por arquivo), registrar com `logging` em nível adequado (`warning` / `error`), incrementar contadores de erro e seguir o processamento dos demais itens quando o fluxo for em lote.
+- **Falhas de programação** (contrato violado, `None` inesperado): não mascarar com `except Exception`; deixar subir ou usar mensagens explícitas; `raise ... from e` ao re-lançar.
+- Não engolir exceções sem log e sem re-raise quando o chamador precisa saber que o passo falhou.
+- **Retries:** apenas para I/O idempotente ou com compensação clara (ex.: download SharePoint); backoff + jitter; limite máximo de tentativas; logar cada falha antes do retry.
+- **Validação de dados de negócio:** centralizar em `validators` ou schemas Pydantic; falhar cedo com mensagens que mencionem o campo e o arquivo/registro quando possível.
+
+## RPA e integrações
+
+- Credenciais e secrets somente via variáveis de ambiente ou arquivos fora do repositório; nunca commitar tokens.
+- Caminhos: preferir `pathlib.Path` em código novo; normalizar encoding (`utf-8`) em leitura/escrita de texto.
+- Operações em lote: idempotência onde aplicável (ex.: upsert de estado de sync); documentar efeitos colaterais no docstring da função de orquestração.
+
+## Observabilidade e operação
+
+- Usar o logger do projeto de forma consistente; incluir contexto (nome do arquivo, id da nota, operação).
+- Níveis: `debug` para diagnóstico fino; `info` para marcos; `warning` para recuperável; `error` para falha de item ou etapa crítica.
+
+## Testes e qualidade
+
+- Testes unitários para extractors e validators com fixtures pequenas (trechos de XML/PDF mockados ou arquivos em `tests/fixtures/`).
+- Para integração SharePoint, preferir testes manuais ou marcados (`pytest -m integration`) com credenciais locais, não obrigatórios no CI sem secrets.
+
+## Dependências
+
+- Fixar versões principais em `requirements.txt` quando o projeto estabilizar; alinhar com a versão instalada no ambiente RPA.

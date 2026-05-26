@@ -1,0 +1,13 @@
+---
+description: Regras gerais do projeto 
+alwaysApply: true
+---
+
+# Regras do projeto
+
+Este repositório é um **bot RPA de faturamento** (extração de PDF/XML, validação, saída CSV/zip, sync SharePoint).
+
+- **Fluxo de negócio (diagrama):** `docs/fluxo_rpa_sharepoint.png` — também resumido em Mermaid em `python_rpa_bot.mdc`.
+- Convenções **Python/RPA** (tipos, I/O, erros, Pydantic, RORO, layout de módulos): ver `python_rpa_bot.mdc` (aplica-se a `**/*.py`).
+
+Para outras regras só em certos arquivos, crie outro `.mdc` em `.cursor/rules/` com `alwaysApply: false` e `globs`.
